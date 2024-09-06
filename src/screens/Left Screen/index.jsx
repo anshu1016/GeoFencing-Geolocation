@@ -3,113 +3,106 @@ import {
   Marker,
   Popup,
   TileLayer,
-  useMapEvents,
+  useMap,
+  GeoJSON,
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
+import * as turf from '@turf/turf';
 
-const MapClickHandler = ({ setPosition }) => {
-  useMapEvents({
-    click(e) {
-      if (e.latlng) {
-        setPosition(e.latlng);
-      }
-    },
-  });
+const LocationMarker = () => {
+  const [initialPosition, setInitialPosition] = useState(null);
+  const [currentPosition, setCurrentPosition] = useState(null);
+  const [circle, setCircle] = useState(null);
 
-  return null;
-};
-
-const DraggableMarker = ({ position, onClickReturn }) => {
-  const [originalPosition, setOriginalPosition] = useState(position);
-
-  const handleClick = () => {
-    onClickReturn();
-  };
+  const map = useMap();
 
   useEffect(() => {
-    if (position) {
-      setOriginalPosition(position);
-    }
-  }, [position]);
+    // Options for geolocation
+    const geoOptions = {
+      enableHighAccuracy: true,
+      maximumAge: 1800000, // 30 minutes cache
+      timeout: 10000, // Timeout after 10 seconds
+    };
+
+    // Fetch the user's initial location
+    const getInitialPosition = () => {
+      navigator.geolocation.getCurrentPosition(
+        position => {
+          const { latitude, longitude } = position.coords;
+          const initialCoords = [longitude, latitude];
+
+          // Set initial position
+          setInitialPosition(initialCoords);
+
+          // Create a 500m radius circle around initial location
+          const turfCircle = turf.circle(initialCoords, 0.115, {
+            units: 'kilometers',
+          });
+          setCircle(turfCircle);
+
+          // Pan map to initial position
+          map.flyTo([latitude, longitude], map.getZoom());
+        },
+        error => {
+          console.error('Error fetching initial location:', error);
+        },
+        geoOptions
+      );
+    };
+
+    // Live tracking for current position
+    const watcher = navigator.geolocation.watchPosition(
+      position => {
+        const { latitude, longitude } = position.coords;
+        const newCoords = {
+          lat: latitude,
+          lng: longitude,
+        };
+
+        // Update current position for live tracking
+        setCurrentPosition(newCoords);
+
+        // Log new coordinates for live tracking
+        console.log('New coordinates: ', newCoords);
+
+        // Pan map to the new position
+        map.flyTo([latitude, longitude], map.getZoom());
+      },
+      error => {
+        console.error('Error tracking position:', error);
+      },
+      geoOptions
+    );
+
+    // Initial position on component mount
+    getInitialPosition();
+
+    // Cleanup the watcher on component unmount
+    return () => {
+      navigator.geolocation.clearWatch(watcher);
+    };
+  }, [map]);
 
   return (
     <>
-      {position && (
-        <Marker position={position}>
-          <Popup>
-            You are here. <br /> Click the icon to return.
-          </Popup>
+      {currentPosition && (
+        <Marker position={currentPosition}>
+          <Popup>You are here</Popup>
         </Marker>
       )}
-      <button
-        onClick={handleClick}
-        style={{
-          position: 'absolute',
-          bottom: '10px',
-          left: '10px',
-          backgroundColor: 'white',
-          border: 'none',
-          padding: '10px',
-          cursor: 'pointer',
-          zIndex: 1000,
-        }}
-      >
-        My Location
-      </button>
+      {/* Render the GeoJSON circle created by Turf.js */}
+      {circle && <GeoJSON data={circle} />}
     </>
   );
 };
 
 const Map = () => {
-  const [currentPos, setCurrentPos] = useState({
-    latitude: 0,
-    longitude: 0,
-  });
-  const [markerPosition, setMarkerPosition] = useState({
-    lat: 0,
-    lng: 0,
-  });
-
-  useEffect(() => {
-    async function getPositions() {
-      if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          function (position) {
-            const pos = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            };
-            setCurrentPos(pos);
-            setMarkerPosition(pos);
-          },
-          function (error) {
-            console.error('Error fetching location:', error);
-          }
-        );
-      } else {
-        alert('Geolocation is not supported by your browser.');
-      }
-    }
-    getPositions();
-  }, []);
-
-  const returnToOriginalPosition = useCallback(() => {
-    const originalPos = JSON.parse(localStorage.getItem('originalPosition'));
-    if (originalPos) {
-      setMarkerPosition(originalPos);
-    }
-  }, []);
-
-  if (currentPos.latitude === 0 && currentPos.longitude === 0) {
-    return <div>Error: Unable to fetch location.</div>;
-  }
-
   return (
     <div className="h-screen max-w-[50%] relative flex items-center bg-red-500 border border-y-red-500">
       <MapContainer
-        center={[currentPos.latitude, currentPos.longitude]}
-        zoom={11}
+        center={{ lat: 51.505, lng: -0.09 }}
+        zoom={50}
         scrollWheelZoom={false}
         style={{
           height: '100%',
@@ -122,11 +115,7 @@ const Map = () => {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <MapClickHandler setPosition={setMarkerPosition} />
-        <DraggableMarker
-          position={markerPosition}
-          onClickReturn={returnToOriginalPosition}
-        />
+        <LocationMarker />
       </MapContainer>
     </div>
   );
